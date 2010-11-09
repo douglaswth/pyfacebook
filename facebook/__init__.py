@@ -1276,7 +1276,6 @@ class Facebook(object):
 
         if not params:
             return False
-
         if params.get('in_canvas') == '1':
             self.in_canvas = True
 
@@ -1288,9 +1287,13 @@ class Facebook(object):
 
         if params.get('added') == '1':
             self.added = True
-
-        if params.get('expires'):
-            self.session_key_expires = int(params['expires'])
+        
+        # see error: https://github.com/sciyoshi/pyfacebook/issuesearch?state=open&q=django#issue/45
+        try:
+            if params.get('expires'):
+                self.session_key_expires = int(params['expires'])
+        except ValueError:
+            pass
 
         if 'locale' in params:
             self.locale = params['locale']
