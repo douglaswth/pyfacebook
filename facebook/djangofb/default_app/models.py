@@ -4,13 +4,27 @@ from django.db import models
 # from outside of a view, which lets us have cleaner code
 from facebook.djangofb import get_facebook_client
 
+
+def _2int(d, k):
+    try:
+        d = d.__dict__
+    except:
+        pass
+    
+    t = d.get(k, '')
+    if t == 'None':
+        t = 0
+    else:
+        t = int(t)
+    return t
+
 class UserManager(models.Manager):
     """Custom manager for a Facebook User."""
     
     def get_current(self):
         """Gets a User object for the logged-in Facebook user."""
         facebook = get_facebook_client()
-        user, created = self.get_or_create(id=int(facebook.uid))
+        user, created = self.get_or_create(id=_2int(facebook, 'uid'))
         if created:
             # we could do some custom actions for new users here...
             pass
@@ -25,7 +39,7 @@ class User(models.Model):
     # TODO: The data that you want to store for each user would go here.
     # For this sample, we let users let people know their favorite progamming
     # language, in the spirit of Extended Info.
-    language = models.CharField(maxlength=64, default='Python')
+    language = models.CharField(max_length=64, default='Python')
 
     # Add the custom manager
     objects = UserManager()

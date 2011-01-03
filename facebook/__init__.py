@@ -50,10 +50,12 @@ import struct
 import urllib
 import urllib2
 import httplib
+import hmac
 try:
     import hashlib
 except ImportError:
     import md5 as hashlib
+from django.conf import settings
 import binascii
 import urlparse
 import mimetypes
@@ -61,14 +63,17 @@ import mimetypes
 # try to use simplejson first, otherwise fallback to XML
 RESPONSE_FORMAT = 'JSON'
 try:
-    import simplejson
-except ImportError:
+    import json as simplejson
+    simplejson.loads
+except (ImportError, AttributeError):
     try:
-        import json as simplejson
-    except ImportError:
+        import simplejson
+        simplejson.loads
+    except (ImportError, AttributeError):
         try:
             from django.utils import simplejson
-        except ImportError:
+            simplejson.loads
+        except (ImportError, AttributeError):
             try:
                 import jsonlib as simplejson
                 simplejson.loads
@@ -103,12 +108,16 @@ except ImportError:
         res = urllib2.urlopen(url, data=data)
         return res.read()
 
-__all__ = ['Facebook']
+__all__ = ['Facebook','create_hmac']
 
-VERSION = '0.1'
+VERSION = '1.0a2'
 
 FACEBOOK_URL = 'http://api.facebook.com/restserver.php'
+FACEBOOK_VIDEO_URL = 'http://api-video.facebook.com/restserver.php'
 FACEBOOK_SECURE_URL = 'https://api.facebook.com/restserver.php'
+
+def create_hmac(tbhashed):
+    return hmac.new(settings.SECRET_KEY, tbhashed, hashlib.sha1).hexdigest()
 
 class json(object): pass
 
@@ -152,11 +161,31 @@ METHODS = {
         'getAllocation': [
             ('integration_point_name', str, []),
         ],
+        'getRestrictionInfo': [],
+        'setRestrictionInfo': [
+            ('format', str, ['optional']),
+            ('callback', str, ['optional']),
+            ('restriction_str', json, ['optional']),
+        ],
+        # Some methods don't work with access_tokens, the signed option forces
+        # use of the secret_key signature (avoids error 15 and, sometimes, 8) 
+        'getAppProperties': [
+            ('properties', list, []),
+            'signed'
+        ],
+        'setAppProperties': [
+            ('properties', json, []),
+            'signed'
+        ],
     },
 
     # auth methods
     'auth': {
         'revokeAuthorization': [
+            ('uid', int, ['optional']),
+        ],
+        'revokeExtendedPermission': [
+            ('perm', str, []),
             ('uid', int, ['optional']),
         ],
     },
@@ -240,6 +269,9 @@ METHODS = {
         'query': [
             ('query', str, []),
         ],
+        'multiquery': [
+            ('queries', json, []),
+        ],
     },
 
     # friends methods
@@ -256,6 +288,11 @@ METHODS = {
         'getLists': [],
 
         'getAppUsers': [],
+        
+        'getMutualFriends': [
+            ('target_uid', int, []),
+            ('source_uid', int, ['optional']),
+        ],
     },
 
     # notifications methods
@@ -338,6 +375,10 @@ METHODS = {
 
         'isAppAdded': [],
 
+        'isAppUser': [
+            ('uid', int, []),
+        ],
+
         'hasAppPermission': [
             ('ext_perm', str, []),
             ('uid', int, ['optional']),
@@ -353,6 +394,20 @@ METHODS = {
 
     # events methods
     'events': {
+        'cancel': [
+            ('eid', int, []),
+            ('cancel_message', str, ['optional']),
+         ],
+
+        'create': [
+            ('event_info', json, []),
+        ],
+
+        'edit': [
+            ('eid', int, []),
+            ('event_info', json, []),
+        ],
+
         'get': [
             ('uid', int, ['optional']),
             ('eids', list, ['optional']),
@@ -365,8 +420,26 @@ METHODS = {
             ('eid', int, []),
         ],
 
-        'create': [
+        'invite': [
+            ('eid', int, []),
+            ('uids', list, []),
+            ('personal_message', str, ['optional']),
+        ],
+
+        'rsvp': [
+            ('eid', int, []),
+            ('rsvp_status', str, []),
+        ],
+
+        'edit': [
+            ('eid', int, []),
             ('event_info', json, []),
+        ],
+
+        'invite': [
+            ('eid', int, []),
+            ('uids', list, []),
+            ('personal_message', str, ['optional']),
         ],
     },
 
@@ -450,7 +523,7 @@ METHODS = {
             ('tag_text', str, [('default', '')]),
             ('x', float, [('default', 50)]),
             ('y', float, [('default', 50)]),
-            ('tags', str, ['optional']),
+            ('tags', json, ['optional']),
         ],
 
         'createAlbum': [
@@ -472,6 +545,12 @@ METHODS = {
 
         'getTags': [
             ('pids', list, []),
+        ],
+    },
+
+    # videos methods
+    'video': {
+        'getUploadLimits': [
         ],
     },
 
@@ -546,6 +625,20 @@ METHODS = {
         ],
     },
 
+    'links': {
+        'post': [
+            ('url', str, []),
+            ('comment', str, []),
+            ('uid', int, []),
+            ('image', str, ['optional']),
+            ('callback', str, ['optional']),
+        ],
+        'preview': [
+            ('url', str, []),
+            ('callback', str, ['optional']),
+        ],
+    },
+
     #stream methods (beta)
     'stream' : {
         'addComment' : [
@@ -598,8 +691,196 @@ METHODS = {
             ('uid', int, ['optional']),
             ('post_id', int, ['optional']),
         ],
+    },
+
+    # livemessage methods (beta)
+    'livemessage': {
+        'send': [
+            ('recipient', int, []),
+            ('event_name', str, []),
+            ('message', str, []),  
+        ],
+    },
+
+    # dashboard methods (beta)
+    'dashboard': {
+        # setting counters for a single user
+        'decrementCount': [
+            ('uid', int, []),
+        ],
+
+        'incrementCount': [
+            ('uid', int, []),
+        ],
+
+        'getCount': [
+            ('uid', int, []),
+        ],
+
+        'setCount': [
+            ('uid', int, []),
+            ('count', int, []),
+        ],
+
+        # setting counters for multiple users
+        'multiDecrementCount': [
+            ('uids', list, []),
+        ],
+
+        'multiIncrementCount': [
+            ('uids', list, []),
+        ],
+
+        'multiGetCount': [
+            ('uids', list, []),
+        ],
+
+        'multiSetCount': [
+            ('uids', list, []),
+        ],
+
+        # setting news for a single user
+        'addNews': [
+            ('news', json, []),
+            ('image', str, ['optional']),
+            ('uid', int, ['optional']),
+        ],
+
+        'getNews': [
+            ('uid', int, []),
+            ('news_ids', list, ['optional']),
+        ],
+
+        'clearNews': [
+            ('uid', int, []),
+            ('news_ids', list, ['optional']),
+        ],
+
+        # setting news for multiple users
+        'multiAddNews': [
+            ('uids', list, []),
+            ('news', json, []),
+            ('image', str, ['optional']),
+        ],
+
+        'multiGetNews': [
+            ('uids', json, []),
+        ],
+
+        'multiClearNews': [
+            ('uids', json, []),
+        ],
+
+        # setting application news for all users
+        'addGlobalNews': [
+            ('news', json, []),
+            ('image', str, ['optional']),
+        ],
+
+        'getGlobalNews': [
+            ('news_ids', list, ['optional']),
+        ],
+
+        'clearGlobalNews': [
+            ('news_ids', list, ['optional']),
+        ],
+
+        # user activity
+        'getActivity': [
+            ('activity_ids', list, ['optional']),
+        ],
+
+        'publishActivity': [
+            ('activity', json, []),
+        ],
+
+        'removeActivity': [
+            ('activity_ids', list, []),
+        ],
+    },
+
+    # comments methods (beta)
+    'comments' : {
+        'add': [
+            # text should be after xid/object_id, but is required
+            ('text', str, []),
+            # One of xid and object_is is required. Can this be expressed?
+            ('xid', str, ['optional']),
+            ('object_id', str, ['optional']),
+            ('uid', int, ['optional']),
+            ('title', str, ['optional']),
+            ('url', str, ['optional']),
+            ('publish_to_stream', bool, [('default', False)]),
+        ],
+
+        'remove': [
+            # One of xid and object_is is required. Can this be expressed?
+            ('xid', str, ['optional']),
+            ('object_id', str, ['optional']),
+            # comment_id should be required
+            ('comment_id', str, ['optional']),
+        ],
+
+        'get': [
+            # One of xid and object_is is required. Can this be expressed?
+            ('xid', str, ['optional']),
+            ('object_id', str, ['optional']),
+        ],
     }
 }
+
+
+def __fixup_param(name, klass, options, param):
+    optional = 'optional' in options
+    default = [x[1] for x in options if isinstance(x, tuple) and x[0] == 'default']
+    if default:
+        default = default[0]
+    else:
+        default = None
+    if param is None:
+        if klass is list and default:
+            param = default[:]
+        else:
+            param = default
+    if klass is json and isinstance(param, (list, dict)):
+        param = simplejson.dumps(param)
+    return param
+
+def __generate_facebook_method(namespace, method_name, param_data):
+    # This method-level option forces the method to be signed rather than using
+    # the access_token
+    signed = False
+    if 'signed' in param_data:
+        signed = True
+        param_data.remove('signed')
+
+    # a required parameter doesn't have 'optional' in the options,
+    # and has no tuple option that starts with 'default'
+    required = [x for x in param_data
+            if 'optional' not in x[2]
+            and not [y for y in x[2] if isinstance(y, tuple) and y and y[0] == 'default']]
+
+    def facebook_method(self, *args, **kwargs):
+        params = {}
+        for i, arg in enumerate(args):
+            params[param_data[i][0]] = arg
+        params.update(kwargs)
+
+        for param in required:
+            if param[0] not in params:
+                raise TypeError("missing parameter %s" % param[0])
+
+        for name, klass, options in param_data:
+            if name in params:
+                params[name] = __fixup_param(name, klass, options, params[name])
+
+        return self(method_name, params, signed=signed)
+
+    facebook_method.__name__ = method_name
+    facebook_method.__doc__ = "Facebook API call. See http://developers.facebook.com/documentation.php?v=1.0&method=%s.%s" % (namespace, method_name)
+
+    return facebook_method
+
 
 class Proxy(object):
     """Represents a "namespace" of Facebook API calls."""
@@ -608,7 +889,7 @@ class Proxy(object):
         self._client = client
         self._name = name
 
-    def __call__(self, method=None, args=None, add_session_args=True):
+    def __call__(self, method=None, args=None, add_session_args=True, signed=False):
         # for Django templates
         if method is None:
             return self
@@ -616,7 +897,7 @@ class Proxy(object):
         if add_session_args:
             self._client._add_session_args(args)
 
-        return self._client('%s.%s' % (self._name, method), args)
+        return self._client('%s.%s' % (self._name, method), args, signed=signed)
 
 
 # generate the Facebook proxies
@@ -624,50 +905,17 @@ def __generate_proxies():
     for namespace in METHODS:
         methods = {}
 
-        for method in METHODS[namespace]:
-            params = ['self']
-            body = ['args = {}']
+        for method, param_data in METHODS[namespace].iteritems():
+            methods[method] = __generate_facebook_method(namespace, method, param_data)
 
-            for param_name, param_type, param_options in METHODS[namespace][method]:
-                param = param_name
-
-                for option in param_options:
-                    if isinstance(option, tuple) and option[0] == 'default':
-                        if param_type == list:
-                            param = '%s=None' % param_name
-                            body.append('if %s is None: %s = %s' % (param_name, param_name, repr(option[1])))
-                        else:
-                            param = '%s=%s' % (param_name, repr(option[1]))
-
-                if param_type == json:
-                    # we only jsonify the argument if it's a list or a dict, for compatibility
-                    body.append('if isinstance(%s, list) or isinstance(%s, dict): %s = simplejson.dumps(%s)' % ((param_name,) * 4))
-
-                if 'optional' in param_options:
-                    param = '%s=None' % param_name
-                    body.append('if %s is not None: args[\'%s\'] = %s' % (param_name, param_name, param_name))
-                else:
-                    body.append('args[\'%s\'] = %s' % (param_name, param_name))
-
-                params.append(param)
-
-            # simple docstring to refer them to Facebook API docs
-            body.insert(0, '"""Facebook API call. See http://developers.facebook.com/documentation.php?v=1.0&method=%s.%s"""' % (namespace, method))
-
-            body.insert(0, 'def %s(%s):' % (method, ', '.join(params)))
-
-            body.append('return self(\'%s\', args)' % method)
-
-            exec('\n    '.join(body))
-
-            methods[method] = eval(method)
-
-        proxy = type('%sProxy' % namespace.title(), (Proxy, ), methods)
+        proxy = type('%sProxy' % namespace.title(), (Proxy,), methods)
 
         globals()[proxy.__name__] = proxy
 
-
 __generate_proxies()
+
+
+
 
 
 class FacebookError(Exception):
@@ -676,7 +924,8 @@ class FacebookError(Exception):
     def __init__(self, code, msg, args=None):
         self.code = code
         self.msg = msg
-        self.args = args
+        self.extra_args = args
+        Exception.__init__(self, code, msg, args)
 
     def __str__(self):
         return 'Error %s: %s' % (self.code, self.msg)
@@ -692,6 +941,10 @@ class AuthProxy(AuthProxy):
             args['auth_token'] = self._client.auth_token
         except AttributeError:
             raise RuntimeError('Client does not have auth_token set.')
+        try:
+            args['generate_session_secret'] = self._client.generate_session_secret
+        except AttributeError:
+            pass
         result = self._client('%s.getSession' % self._name, args)
         self._client.session_key = result['session_key']
         self._client.uid = result['uid']
@@ -719,19 +972,27 @@ class FriendsProxy(FriendsProxy):
 class PhotosProxy(PhotosProxy):
     """Special proxy for facebook.photos."""
 
-    def upload(self, image, aid=None, caption=None, size=(604, 1024), filename=None, callback=None):
+    def upload(self, image, aid=None, uid=None, caption=None, size=(720, 720), filename=None, callback=None):
         """Facebook API call. See http://developers.facebook.com/documentation.php?v=1.0&method=photos.upload
 
         size -- an optional size (width, height) to resize the image to before uploading. Resizes by default
-                to Facebook's maximum display width of 604.
+                to Facebook's maximum display dimension of 720.
         """
         args = {}
+
+        if uid is not None:
+            args['uid'] = uid
 
         if aid is not None:
             args['aid'] = aid
 
         if caption is not None:
             args['caption'] = caption
+
+        if self._client.oauth2:
+            url = self._client.facebook_secure_url
+        else:
+            url = self._client.facebook_url
 
         args = self._client._build_post_args('facebook.photos.upload', self._client._add_session_args(args))
 
@@ -760,12 +1021,15 @@ class PhotosProxy(PhotosProxy):
             image = filename
 
         content_type, body = self.__encode_multipart_formdata(list(args.iteritems()), [(image, data)])
-        urlinfo = urlparse.urlsplit(self._client.facebook_url)
+        urlinfo = urlparse.urlsplit(url)
         try:
             content_length = len(body)
             chunk_size = 4096
 
-            h = httplib.HTTPConnection(urlinfo[1])
+            if self._client.oauth2:
+                h = httplib.HTTPSConnection(urlinfo[1])
+            else:
+                h = httplib.HTTPConnection(urlinfo[1])
             h.putrequest('POST', urlinfo[2])
             h.putheader('Content-Type', content_type)
             h.putheader('Content-Length', str(content_length))
@@ -800,7 +1064,7 @@ class PhotosProxy(PhotosProxy):
                 from google.appengine.api import urlfetch
 
                 try:
-                    response = urlread(url=self._client.facebook_url,data=body,headers={'POST':urlinfo[2],'Content-Type':content_type,'MIME-Version':'1.0'})
+                    response = urlread(url=url,data=body,headers={'POST':urlinfo[2],'Content-Type':content_type,'MIME-Version':'1.0'})
                 except urllib2.URLError:
                     raise Exception('Error uploading photo: Facebook returned %s' % (response))
             except ImportError:
@@ -808,6 +1072,127 @@ class PhotosProxy(PhotosProxy):
                 raise Exception('Error uploading photo.')
 
         return self._client._parse_response(response, 'facebook.photos.upload')
+
+
+    def __encode_multipart_formdata(self, fields, files):
+        """Encodes a multipart/form-data message to upload an image."""
+        boundary = '-------tHISiStheMulTIFoRMbOUNDaRY'
+        crlf = '\r\n'
+        l = []
+
+        for (key, value) in fields:
+            l.append('--' + boundary)
+            l.append('Content-Disposition: form-data; name="%s"' % str(key))
+            l.append('')
+            l.append(str(value))
+        for (filename, value) in files:
+            l.append('--' + boundary)
+            l.append('Content-Disposition: form-data; filename="%s"' % (str(filename), ))
+            l.append('Content-Type: %s' % self.__get_content_type(filename))
+            l.append('')
+            l.append(value.getvalue())
+        l.append('--' + boundary + '--')
+        l.append('')
+        body = crlf.join(l)
+        content_type = 'multipart/form-data; boundary=%s' % boundary
+        return content_type, body
+
+
+    def __get_content_type(self, filename):
+        """Returns a guess at the MIME type of the file from the filename."""
+        return str(mimetypes.guess_type(filename)[0]) or 'application/octet-stream'
+
+
+class VideoProxy(VideoProxy):
+    """Special proxy for facebook.video."""
+
+    def upload(self, video, aid=None, title=None, description=None, filename=None, uid=None, privacy=None, callback=None):
+        """Facebook API call. See http://wiki.developers.facebook.com/index.php/Video.upload"""
+        args = {}
+
+        if aid is not None:
+            args['aid'] = aid
+
+        if title is not None:
+            args['title'] = title
+
+        if description is not None:
+            args['description'] = title
+            
+        if uid is not None:
+            args['uid'] = uid
+
+        if privacy is not None:
+            args['privacy'] = privacy
+
+        args = self._client._build_post_args('facebook.video.upload', self._client._add_session_args(args))
+
+        try:
+            import cStringIO as StringIO
+        except ImportError:
+            import StringIO
+
+        # check for a filename specified...if the user is passing binary data in
+        # video then a filename will be specified
+        if filename is None:
+            data = StringIO.StringIO(open(video, 'rb').read())
+        else:
+            # there was a filename specified, which indicates that video was not
+            # the path to an video file but rather the binary data of a file
+            data = StringIO.StringIO(video)
+            video = filename
+
+        content_type, body = self.__encode_multipart_formdata(list(args.iteritems()), [(video, data)])
+        
+        # Set the correct End Point Url, note this is different to all other FB EndPoints
+        urlinfo = urlparse.urlsplit(FACEBOOK_VIDEO_URL)
+        try:
+            content_length = len(body)
+            chunk_size = 4096
+
+            h = httplib.HTTPConnection(urlinfo[1])
+            h.putrequest('POST', urlinfo[2])
+            h.putheader('Content-Type', content_type)
+            h.putheader('Content-Length', str(content_length))
+            h.putheader('MIME-Version', '1.0')
+            h.putheader('User-Agent', 'PyFacebook Client Library')
+            h.endheaders()
+
+            if callback:
+                count = 0
+                while len(body) > 0:
+                    if len(body) < chunk_size:
+                        data = body
+                        body = ''
+                    else:
+                        data = body[0:chunk_size]
+                        body = body[chunk_size:]
+
+                    h.send(data)
+                    count += 1
+                    callback(count, chunk_size, content_length)
+            else:
+                h.send(body)
+
+            response = h.getresponse()
+
+            if response.status != 200:
+                raise Exception('Error uploading video: Facebook returned HTTP %s (%s)' % (response.status, response.reason))
+            response = response.read()
+        except:
+            # sending the photo failed, perhaps we are using GAE
+            try:
+                from google.appengine.api import urlfetch
+
+                try:
+                    response = urlread(url=FACEBOOK_VIDEO_URL,data=body,headers={'POST':urlinfo[2],'Content-Type':content_type,'MIME-Version':'1.0'})
+                except urllib2.URLError:
+                    raise Exception('Error uploading video: Facebook returned %s' % (response))
+            except ImportError:
+                # could not import from google.appengine.api, so we are not running in GAE
+                raise Exception('Error uploading video.')
+
+        return self._client._parse_response(response, 'facebook.video.upload')
 
 
     def __encode_multipart_formdata(self, fields, files):
@@ -850,6 +1235,10 @@ class Facebook(object):
 
     api_key
         Your API key, as set in the constructor.
+
+    app_id
+        Your application id, as set in the constructor or fetched from
+        fb_sig_app_id request parameter.
 
     app_name
         Your application's name, i.e. the APP_NAME in http://apps.facebook.com/APP_NAME/ if
@@ -897,6 +1286,15 @@ class Facebook(object):
     locale
         The user's locale. Default: 'en_US'
 
+    oauth2:
+        Whether to use the new OAuth 2.0 authentication mechanism.  Default: False
+
+    oauth2_token:
+        The current OAuth 2.0 token.
+    
+    oauth2_token_expires:
+        The UNIX time when the OAuth 2.0 token expires (seconds).
+
     page_id
         Set to the page_id of the current page (if any)
 
@@ -924,7 +1322,10 @@ class Facebook(object):
 
     """
 
-    def __init__(self, api_key, secret_key, auth_token=None, app_name=None, callback_path=None, internal=None, proxy=None, facebook_url=None, facebook_secure_url=None):
+    def __init__(self, api_key, secret_key, auth_token=None, app_name=None,
+                 callback_path=None, internal=None, proxy=None,
+                 facebook_url=None, facebook_secure_url=None,
+                 generate_session_secret=0, app_id=None, oauth2=False):
         """
         Initializes a new Facebook object which provides wrappers for the Facebook API.
 
@@ -943,10 +1344,15 @@ class Facebook(object):
         """
         self.api_key = api_key
         self.secret_key = secret_key
+        self.app_id = app_id
+        self.oauth2 = oauth2
+        self.oauth2_token = None
+        self.oauth2_token_expires = None
         self.session_key = None
         self.session_key_expires = None
         self.auth_token = auth_token
         self.secret = None
+        self.generate_session_secret = generate_session_secret
         self.uid = None
         self.page_id = None
         self.in_canvas = False
@@ -960,7 +1366,7 @@ class Facebook(object):
         self._friends = None
         self.locale = 'en_US'
         self.profile_update_time = None
-        self.ext_perms = None
+        self.ext_perms = []
         self.proxy = proxy
         if facebook_url is None:
             self.facebook_url = FACEBOOK_URL
@@ -1032,7 +1438,7 @@ class Facebook(object):
             raise FacebookError(response['error_code'], response['error_msg'], response['request_args'])
 
 
-    def _build_post_args(self, method, args=None):
+    def _build_post_args(self, method, args=None, signed=False):
         """Adds to args parameters that are necessary for every call to the API."""
         if args is None:
             args = {}
@@ -1046,10 +1452,13 @@ class Facebook(object):
                 args[arg[0]] = str(arg[1]).lower()
 
         args['method'] = method
-        args['api_key'] = self.api_key
-        args['v'] = '1.0'
         args['format'] = RESPONSE_FORMAT
-        args['sig'] = self._hash_args(args)
+        if not signed and self.oauth2 and self.oauth2_token:
+            args['access_token'] = self.oauth2_token
+        else:
+            args['api_key'] = self.api_key
+            args['v'] = '1.0'
+            args['sig'] = self._hash_args(args)
 
         return args
 
@@ -1064,7 +1473,8 @@ class Facebook(object):
             #some calls don't need a session anymore. this might be better done in the markup
             #raise RuntimeError('Session key not set. Make sure auth.getSession has been called.')
 
-        args['session_key'] = self.session_key
+        if not self.oauth2 or not self.oauth2_token:
+            args['session_key'] = self.session_key
         args['call_id'] = str(int(time.time() * 1000))
 
         return args
@@ -1117,7 +1527,7 @@ class Facebook(object):
                           for k, v in params])
 
 
-    def __call__(self, method=None, args=None, secure=False):
+    def __call__(self, method=None, args=None, secure=False, signed=False):
         """Make a call to Facebook's REST server."""
         # for Django templates, if this object is called without any arguments
         # return the object itself
@@ -1130,23 +1540,54 @@ class Facebook(object):
 
         # @author: houyr
         # fix for bug of UnicodeEncodeError
-        post_data = self.unicode_urlencode(self._build_post_args(method, args))
+        post_data = self.unicode_urlencode(self._build_post_args(method, args, signed))
 
         if self.proxy:
             proxy_handler = urllib2.ProxyHandler(self.proxy)
             opener = urllib2.build_opener(proxy_handler)
-            if secure:
+            if self.oauth2 or secure:
                 response = opener.open(self.facebook_secure_url, post_data).read()
             else:
                 response = opener.open(self.facebook_url, post_data).read()
         else:
-            if secure:
+            if self.oauth2 or secure:
                 response = urlread(self.facebook_secure_url, post_data)
             else:
                 response = urlread(self.facebook_url, post_data)
 
         return self._parse_response(response, method)
 
+
+    def oauth2_access_token(self, code, next, required_permissions=None):
+        """
+        We've called authorize, and received a code, now we need to convert
+        this to an access_token
+        
+        """
+        args = {
+            'client_id': self.app_id,
+            'client_secret': self.secret_key,
+            'redirect_uri': next,
+            'code': code
+        }
+
+        if required_permissions:
+            args['scope'] = ",".join(required_permissions)
+
+        # TODO see if immediate param works as per OAuth 2.0 spec?
+        url = self.get_graph_url('oauth/access_token', **args)
+        
+        if self.proxy:
+            proxy_handler = urllib2.ProxyHandler(self.proxy)
+            opener = urllib2.build_opener(proxy_handler)
+            response = opener.open(url).read()
+        else:
+            response = urlread(url)
+
+        result = urlparse.parse_qs(response)
+        self.oauth2_token = result['access_token'][0]
+        self.oauth2_token_expires = time.time() + int(result['expires'][0])
+        
 
     # URL helpers
     def get_url(self, page, **args):
@@ -1164,6 +1605,14 @@ class Facebook(object):
 
         """
         return 'http://apps.facebook.com/%s/%s' % (self.app_name, path)
+
+
+    def get_graph_url(self, path='', **args):
+        """
+        Returns the URL for the graph API with the supplied path and parameters
+
+        """
+        return 'https://graph.facebook.com/%s?%s' % (path, urllib.urlencode(args))
 
 
     def get_add_url(self, next=None):
@@ -1196,28 +1645,47 @@ class Facebook(object):
         return self.get_url('authorize', **args)
 
 
-    def get_login_url(self, next=None, popup=False, canvas=True):
+    def get_login_url(self, next=None, popup=False, canvas=True,
+                      required_permissions=None):
         """
         Returns the URL that the user should be redirected to in order to login.
 
         next -- the URL that Facebook should redirect to after login
+        required_permissions -- permission required by the application
 
         """
-        args = {'api_key': self.api_key, 'v': '1.0'}
+        if self.oauth2:
+            args = {
+                'client_id': self.app_id,
+                'redirect_uri': next
+            }
 
-        if next is not None:
-            args['next'] = next
-
-        if canvas is True:
-            args['canvas'] = 1
-
-        if popup is True:
-            args['popup'] = 1
-
-        if self.auth_token is not None:
-            args['auth_token'] = self.auth_token
-
-        return self.get_url('login', **args)
+            if required_permissions:
+                args['scope'] = required_permissions
+            
+            if popup:
+                args['display'] = 'popup'
+            
+            return self.get_graph_url('oauth/authorize', **args)
+        else:
+            args = {'api_key': self.api_key, 'v': '1.0'}
+    
+            if next is not None:
+                args['next'] = next
+    
+            if canvas is True:
+                args['canvas'] = 1
+    
+            if popup is True:
+                args['popup'] = 1
+    
+            if required_permissions:
+                args['req_perms'] = ",".join(required_permissions)
+                
+            if self.auth_token is not None:
+                args['auth_token'] = self.auth_token
+    
+            return self.get_url('login', **args)
 
 
     def login(self, popup=False):
@@ -1251,7 +1719,7 @@ class Facebook(object):
         webbrowser.open(self.get_ext_perm_url(ext_perm, popup=popup))
 
 
-    def check_session(self, request):
+    def check_session(self, request, params=None):
         """
         Checks the given Django HttpRequest for Facebook parameters such as
         POST variables or an auth token. If the session is valid, returns True
@@ -1262,63 +1730,78 @@ class Facebook(object):
         """
         self.in_canvas = (request.POST.get('fb_sig_in_canvas') == '1')
 
-        if self.session_key and (self.uid or self.page_id):
+        if not 'auth_token' in request.GET and self.session_key and (self.uid or self.page_id):
             return True
 
+        if not params:
+            if request.method == 'POST':
+                params = self.validate_signature(request.POST)
+            else:
+                if 'installed' in request.GET:
+                    self.added = True
 
-        if request.method == 'POST':
-            params = self.validate_signature(request.POST)
-        else:
-            if 'installed' in request.GET:
-                self.added = True
+                if 'fb_page_id' in request.GET:
+                    self.page_id = request.GET['fb_page_id']
 
-            if 'fb_page_id' in request.GET:
-                self.page_id = request.GET['fb_page_id']
+                if 'auth_token' in request.GET:
+                    self.added = True # added by Marinho
+                    self.auth_token = request.GET['auth_token']
 
-            if 'auth_token' in request.GET:
-                self.auth_token = request.GET['auth_token']
+                    try:
+                        self.auth.getSession()
+                    except FacebookError, e:
+                        self.auth_token = None
+                        return False
 
-                try:
-                    self.auth.getSession()
-                except FacebookError, e:
-                    self.auth_token = None
-                    return False
+                    return True
 
-                return True
-
-            params = self.validate_signature(request.GET)
+                params = self.validate_signature(request.GET)
 
         if not params:
+            cookies = None
+            
             # first check if we are in django - to check cookies
             if hasattr(request, 'COOKIES'):
-                params = self.validate_cookie_signature(request.COOKIES)
-                self.is_session_from_cookie = True
+                cookies = request.COOKIES
             else:
-                # if not, then we might be on GoogleAppEngine, check their request object cookies
-                if hasattr(request,'cookies'):
-                    params = self.validate_cookie_signature(request.cookies)
+                if hasattr(request, 'cookies'):
+                    cookies = request.cookies
+
+            if cookies:
+
+                params = self.validate_oauth_cookie_signature(cookies)
+
+                if params:
+                    self.is_oauth = True
+                    self.oauth_token = params['access_token']
+                else:
+                    params = self.validate_cookie_signature(cookies)
                     self.is_session_from_cookie = True
 
         if not params:
+            if self.validate_iframe(request):
+                return True
+            else:
+                params = {}
+
+        if not params:
             return False
-        if params.get('in_canvas') == '1':
+
+        if 'in_canvas' in params and params.get('in_canvas') == '1':
             self.in_canvas = True
 
-        if params.get('in_iframe') == '1':
+        if 'in_iframe' in params and params.get('in_iframe') == '1':
             self.in_iframe = True
 
-        if params.get('in_profile_tab') == '1':
+        if 'in_profile_tab' in params and params.get('in_profile_tab') == '1':
             self.in_profile_tab = True
 
-        if params.get('added') == '1':
+        if 'added' in params and params.get('added') == '1':
             self.added = True
-        
-        # see error: https://github.com/sciyoshi/pyfacebook/issuesearch?state=open&q=django#issue/45
-        try:
-            if params.get('expires'):
-                self.session_key_expires = int(params['expires'])
-        except ValueError:
-            pass
+
+        if params.get('expires'):
+            # Marinho Brandao - fixing problem with no session
+            self.session_key_expires = params.get('expires', '').isdigit() and int(params['expires']) or 0 
 
         if 'locale' in params:
             self.locale = params['locale']
@@ -1328,9 +1811,12 @@ class Facebook(object):
                 self.profile_update_time = int(params['profile_update_time'])
             except ValueError:
                 pass
-
+        
         if 'ext_perms' in params:
-            self.ext_perms = params['ext_perms']
+            if params['ext_perms']:
+                self.ext_perms = params['ext_perms'].split(',')
+            else:
+                self.ext_perms = []
 
         if 'friends' in params:
             if params['friends']:
@@ -1338,12 +1824,18 @@ class Facebook(object):
             else:
                 self._friends = []
 
+        # If app_id is not set explicitly, pick it up from the param
+        if not self.app_id and 'app_id' in params:
+            self.app_id = params['app_id']
+
         if 'session_key' in params:
             self.session_key = params['session_key']
             if 'user' in params:
                 self.uid = params['user']
             elif 'page_id' in params:
                 self.page_id = params['page_id']
+            elif 'uid' in params:
+                self.uid = params['uid']
             else:
                 return False
         elif 'profile_session_key' in params:
@@ -1361,6 +1853,13 @@ class Facebook(object):
 
         return True
 
+    def validate_oauth_session(self, session_json):
+        session = simplejson.loads(session_json)
+        sig = session.pop('sig')
+        hash = self._hash_args(session)
+        if hash == sig:
+            return session
+        return None
 
     def validate_signature(self, post, prefix='fb_sig', timeout=None):
         """
@@ -1386,25 +1885,52 @@ class Facebook(object):
         else:
             return None
 
+    def validate_iframe(self, request):
+        request_dict = request.POST if request.method == 'POST' else request.GET
+        if any(not request_dict.has_key(key) for key in ['userid','reqtime','appsig']):
+            return False
+        request_time = request_dict['reqtime']
+        time_now = int(time.time())
+        if time_now - int(request_time) > settings.FACEBOOK_IFRAME_VALIDATION_TIMEOUT:
+            return False
+        userid = int(request_dict['userid'])
+        self.uid = userid
+        app_sig = request_dict['appsig']
+        digest = create_hmac("%s%s" % (str(userid),str(request_time)))
+        return digest == app_sig
+
+    def validate_oauth_cookie_signature(self, cookies):
+        cookie_name = 'fbs_%s' % self.app_id
+        if cookie_name in cookies:
+            # value like
+            # "access_token=104302089510310%7C2.HYYLow1Vlib0s_sJSAESjw__.3600.1275037200-100000214342553%7CtC1aolM22Lauj_dZhYnv_tF2CK4.&base_domain=yaycy.com&expires=1275037200&secret=FvIHkbAFwEy_0sueRk2ZYQ__&session_key=2.HYYoow1Vlib0s_sJSAESjw__.3600.1275037200-100000214342553&sig=7bb035a0411be7aa801964ae34416f28&uid=100000214342553"
+            params = dict([part.split('=') for part in cookies[cookie_name]])
+            sig = params.pop('sig')
+            hash = self._hash_args(params)
+            if hash == sig:
+                return params
+        return None
+
     def validate_cookie_signature(self, cookies):
         """
         Validate parameters passed by cookies, namely facebookconnect or js api.
         """
-
+        
         api_key = self.api_key
         if api_key not in cookies:
             return None
 
         prefix = api_key + "_"
-       
-        params = {} 
+
+        params = {}
         vals = ''
         for k in sorted(cookies):
             if k.startswith(prefix):
                 key = k.replace(prefix,"")
                 value = cookies[k]
-                params[key] = value
-                vals += '%s=%s' % (key, value)
+                if value != 'None':
+                    params[key] = value
+                    vals += '%s=%s' % (key, value)
                 
         hasher = hashlib.md5(vals)
 
